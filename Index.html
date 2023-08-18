@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GoJS Network with User-defined Nodes and Link Labels</title>
+    <script src="https://gojs.net/latest/release/go.js"></script>
+    <style>
+        /* Modal styles */
+        #myModal {
+            display: none;
+            position: fixed;
+            z-index: 1;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.4);
+        }
+        #myModal .modal-content {
+            background-color: #fefefe;
+            margin: 15% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            width: 30%;
+        }
+    </style>
+</head>
+
+<body onload="showModal()">
+
+    <!-- Instructions -->
+    <div style="padding: 20px; background-color: #f9f9f9; border: 1px solid #ddd; margin-bottom: 20px;">
+        <h2>LinkIt Knowledge Network Tool – For Instructors</h2>
+        <p>Construct a network of nodes and labeled links. List the concepts you want to be nodes. Then list link labels. Press "Submit" to see your graph.</p>
+        <p>Connect nodes by dragging lines between them. Label links by right-clicking.</p>
+        <p>Press "Apply Force Layout" to clean up the graph. Pressing "Done" stores your data.</p>
+    </div>
+
+    <!-- The Modal -->
+    <div id="myModal">
+        <div class="modal-content">
+            <p>Please list the concepts you want to be nodes in the network, each on a separate line:</p>
+            <textarea id="conceptsTextarea" rows="5" style="width: 100%;"></textarea><br><br>
+            <p>Please list the possible link labels, each on a separate line:</p>
+            <textarea id="linkLabelsTextarea" rows="5" style="width: 100%;"></textarea><br><br>
+            <button onclick="initializeDiagram()">Submit</button>
+        </div>
+    </div>
+
+    <!-- Adjusted the height to 600px -->
+    <div id="myDiagram" style="border: solid 1px black; width: 100%; height: 600px;"></div>
+    <button onclick="generateAndDownloadMatrix()">Done</button>
+    <button onclick="applyForceDirectedLayout()">Apply Force Layout</button>
+
+    <script>
+        let myDiagram;
+
+        function showModal() {
+            document.getElementById("myModal").style.display = "block";
+        }
+
+        function initializeDiagram() {
+            // Hide the modal
+            document.getElementById("myModal").style.display = "none";
+
+            // Get user input from textareas
+            const conceptsInput = document.getElementById("conceptsTextarea").value;
+            const linkLabelsInput = document.getElementById("linkLabelsTextarea").value;
+
+            // Parse user input to extract individual concepts and link labels
+            const concepts = conceptsInput.split('\n').filter(Boolean);
+            const linkLabels = linkLabelsInput.split('\n').filter(Boolean);
+
+            // Convert concepts to node data array format
+            const nodeDataArray = concepts.map(concept => ({ key: concept }));
+
+            // Initialize the GoJS diagram
+            const $ = go.GraphObject.make;
+            myDiagram = $(go.Diagram, "myDiagram", {
+                "undoManager.isEnabled": true,
+                "layout.isOngoing": false,  // This prevents the layout from recalculating every time a link is added
+                layout: $(go.LayeredDigraphLayout, {
+                    direction: 90,
+                    layerSpacing: 10,
+                    columnSpacing: 10,
+                    setsPortSpots: false
+                })
+            });
+
+            // Define the node template
+            myDiagram.nodeTemplate =
+                $(go.Node, "Auto",
+                    $(go.Shape, "Rectangle", 
+                        { 
+                            fill: "lightblue",
+                            portId: "",  
+                            fromLinkable: true, 
+                            toLinkable: true,
+                            minSize: new go.Size(80, 40)  // Minimum size for the node
+                        }),
+                    $(go.TextBlock, 
+                        { 
+                            margin: 10,
+                            wrap: go.TextBlock.WrapFit,  // Wrap text if it's too long
+                            textAlign: "center"
+                        }, 
+                        new go.Binding("text", "key")
+                    )
+                );
+
+            // Set the model with user-defined nodes
+            myDiagram.model = new go.GraphLinksModel(nodeDataArray);
+
+            // Allowing users to link nodes
+            myDiagram.toolManager.linkingTool.isEnabled = true;
+            myDiagram.toolManager.relinkingTool.isEnabled = true;
+
+            // Dynamically generate the context menu for links based on user-defined link labels
+            const contextMenuItems = linkLabels.map(label => {
+                return $("ContextMenuButton",
+                    $(go.TextBlock, label),
+                    {
+                        click: function (e, obj) {
+                            var link = obj.part.adornedPart;
+                            link.data.label = label;
+                            myDiagram.model.updateTargetBindings(link.data);
+                        }
+                    }
+                );
+            });
+
+            // Styling the links with a label and dynamic context menu
+            myDiagram.linkTemplate =
+                $(go.Link,
+                    { curve: go.Link.Bezier, adjusting: go.Link.Stretch },
+                    $(go.Shape, { strokeWidth: 1.5 }),
+                    $(go.Shape, { toArrow: "Standard", stroke: null }),
+                    $(go.TextBlock,
+                        { segmentOffset: new go.Point(0, -10) },
+                        new go.Binding("text", "label")
+                    ),
+                    {
+                        contextMenu: $(go.Adornment, "Vertical", ...contextMenuItems)
+                    }
+                );
+        }
+
+        function applyForceDirectedLayout() {
+            myDiagram.startTransaction("Force Directed Layout");
+            myDiagram.layout = new go.ForceDirectedLayout();
+            myDiagram.layout.isRealtime = false;
+            myDiagram.zoomToFit();
+            myDiagram.nodes.each(function(node) {
+                node.position = new go.Point(
+                    Math.min(myDiagram.viewportBounds.width - node.actualBounds.width, Math.max(0, node.position.x)),
+                    Math.min(myDiagram.viewportBounds.height - node.actualBounds.height, Math.max(0, node.position.y))
+                );
+            });
+            myDiagram.commitTransaction("Force Directed Layout");
+        }
+
+        function generateAndDownloadMatrix() {
+            const nodeKeys = myDiagram.model.nodeDataArray.map(node => node.key);
+            const links = myDiagram.model.linkDataArray;
+
+            // Initialize an empty matrix
+            const matrix = Array(nodeKeys.length).fill(null).map(() => Array(nodeKeys.length).fill(''));
+
+            // Populate the matrix based on the links
+            for (let link of links) {
+                const fromIndex = nodeKeys.indexOf(link.from);
+                const toIndex = nodeKeys.indexOf(link.to);
+                matrix[fromIndex][toIndex] = link.label || '';
+            }
+
+            // Convert the matrix to CSV format
+            let csvContent = ',' + nodeKeys.join(',') + '\n'; // header
+            matrix.forEach((row, index) => {
+                csvContent += nodeKeys[index] + ',' + row.join(',') + '\n';
+            });
+
+            // Get the current date and time in the format YYYY-MM-DD_HH-MM-SS
+            const currentDate = new Date();
+            const formattedDate = currentDate.toISOString().slice(0, 19).replace(/:/g, '-').replace('T', '_');
+
+            // Trigger a download of the CSV file
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            const url = URL.createObjectURL(blob);
+            link.setAttribute("href", url);
+            link.setAttribute("download", `data_${formattedDate}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    </script>
+
+</body>
+
+</html>
